@@ -392,11 +392,13 @@
 
             ctx.clearRect(0, 0, width, height);
 
-            // 1. Dessiner la portée
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+            // 1. Dessiner la portée (Adaptatif au thème Telegram clair/sombre)
+            ctx.fillStyle = THEME.text; 
+            ctx.globalAlpha = 0.3; // Transparence à 30%
             for (let i = -2; i <= 2; i++) {
                 ctx.fillRect(0, centerY + (i * lineSpacing) - 1, width, 2);
             }
+            ctx.globalAlpha = 1.0; // On réinitialise l'opacité pour le reste du dessin
 
             // 2. Dessiner la Clé (Caractère Unicode Standard)
             ctx.fillStyle = THEME.text;
