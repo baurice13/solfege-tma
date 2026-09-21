@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <!-- Empêche le zoom et le scroll élastique sur mobile -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Solfège Master - Telegram Mini App</title>
+    <!-- Script officiel Telegram WebApp -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        :root {
+            /* Variables basées sur le thème Telegram avec fallback par défaut (Dark) */
+            --bg-color: var(--tg-theme-bg-color, #1a1a2e);
+            --text-color: var(--tg-theme-text-color, #ffffff);
+            --button-color: var(--tg-theme-button-color, #e94560);
+            --button-text: var(--tg-theme-button-text-color, #ffffff);
+            --secondary-bg: var(--tg-theme-secondary-bg-color, #16213e);
+            --hint-color: var(--tg-theme-hint-color, #0f3460);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            overflow: hidden;
+            touch-action: none; /* Empêche le pull-to-refresh et scroll */
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* Effet de secousse */
+        @keyframes shake {
+            0% { transform: translate(1px, 1px) rotate(0deg); }
+            10% { transform: translate(-1px, -2px) rotate(-1deg); }
+            20% { transform: translate(-3px, 0px) rotate(1deg); }
+            30% { transform: translate(3px, 2px) rotate(0deg); }
+            40% { transform: translate(1px, -1px) rotate(1deg); }
+            50% { transform: translate(-1px, 2px) rotate(-1deg); }
+            60% { transform: translate(-3px, 1px) rotate(0deg); }
+            70% { transform: translate(3px, 1px) rotate(-1deg); }
+            80% { transform: translate(-1px, -1px) rotate(1deg); }
+            90% { transform: translate(1px, 2px) rotate(0deg); }
+            100% { transform: translate(1px, -2px) rotate(-1deg); }
+        }
+        body.shaking { animation: shake 0.3s; background-color: #5a1010; transition: background-color 0.1s; }
+
+        /* Conteneurs UI */
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 10; display: flex; flex-direction: column;
+        }
+
+        .screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(8px);
+            pointer-events: auto; opacity: 0; transition: opacity 0.3s; z-index: 20;
+        }
+        .screen.active { opacity: 1; pointer-events: auto; }
+        .screen:not(.active) { pointer-events: none; }
+
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.1); border-radius: 20px;
+            padding: 30px; text-align: center; border: 1px solid rgba(255,255,255,0.2);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3); width: 85%; max-width: 400px;
+        }
+
+        h1 { margin-bottom: 20px; font-size: 28px; color: var(--button-color); text-shadow: 0 0 10px rgba(233,69,96,0.5); }
+        h2 { font-size: 20px; margin-bottom: 10px;}
+        p { margin-bottom: 20px; font-size: 16px; opacity: 0.8;}
+
+        .btn {
+            background-color: var(--button-color); color: var(--button-text);
+            border: none; border-radius: 12px; padding: 15px 30px;
+            font-size: 18px; font-weight: bold; cursor: pointer; width: 100%;
+            margin-bottom: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            transition: transform 0.1s, opacity 0.2s;
+        }
+        .btn:active { transform: scale(0.95); }
+        .btn.outline { background: transparent; border: 2px solid var(--button-color); color: var(--button-color); }
+        .btn.outline.selected { background: var(--button-color); color: var(--button-text); }
+
+        /* HUD Jeu (Vies, Score) */
+        #hud {
+            display: flex; justify-content: space-between; padding: 15px 20px;
+            width: 100%; font-size: 20px; font-weight: bold; text-shadow: 1px 1px 3px #000;
+        }
+        #hud-combo { color: #f1c40f; opacity: 0; transition: opacity 0.2s; }
+        #hud-combo.visible { opacity: 1; }
+
+        /* Clavier Tactile (Notes) */
+        #keyboard {
+            position: absolute; bottom: 0; left: 0; width: 100%;
+            display: flex; height: 100px; background: var(--secondary-bg);
+            border-top: 1px solid rgba(255,255,255,0.1); pointer-events: auto;
+            padding-bottom: env(safe-area-inset-bottom, 0px); /* Support iPhone notch */
+        }
+        .key {
+            flex: 1; border: none; border-right: 1px solid rgba(0,0,0,0.3);
+            background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(0,0,0,0.2) 100%);
+            color: var(--text-color); font-size: 16px; font-weight: bold;
+            display: flex; align-items: center; justify-content: center; flex-direction: column;
+            cursor: pointer; transition: background 0.1s;
+        }
+        .key:last-child { border-right: none; }
+        .key:active, .key.pressed { background: var(--button-color); color: var(--button-text); }
+        
+        canvas { display: block; width: 100%; height: calc(100vh - 100px - env(safe-area-inset-bottom, 0px)); }
+
+        .clef-selector { display: flex; gap: 10px; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+
+    <!-- Moteur de rendu -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- UI Overlay -->
+    <div id="ui-layer">
+        <div id="hud" style="display: none;">
+            <div>Score: <span id="scoreVal">0</span></div>
+            <div id="hud-combo">Combo x<span id="comboVal">1</span></div>
+            <div>Vies: <span id="livesVal">❤️❤️❤️</span></div>
+        </div>
+
+        <!-- Menu Principal -->
+        <div id="menuScreen" class="screen active">
+            <div class="glass-panel">
+                <h1>Solfège Master</h1>
+                <p>High Score : <span id="highScoreVal">0</span></p>
+                <div class="clef-selector">
+                    <button class="btn outline selected" id="btnCleSol">Clé de Sol</button>
+                    <button class="btn outline" id="btnCleFa">Clé de Fa</button>
+                </div>
+                <button class="btn" id="btnPlay">JOUER</button>
+            </div>
+        </div>
+
+        <!-- Menu Game Over -->
+        <div id="gameOverScreen" class="screen">
+            <div class="glass-panel">
+                <h1>Game Over</h1>
+                <h2>Score : <span id="finalScore">0</span></h2>
+                <p>Précision : <span id="precisionVal">0</span>%</p>
+                <p>La plus ratée : <strong id="worstNoteVal">-</strong></p>
+                <button class="btn" id="btnRestart">REJOUER</button>
+                <button class="btn outline" id="btnMenu">MENU PRINCIPAL</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Clavier interactif -->
+    <div id="keyboard" style="display: none;">
+        <button class="key" data-note="Do">Do</button>
+        <button class="key" data-note="Ré">Ré</button>
+        <button class="key" data-note="Mi">Mi</button>
+        <button class="key" data-note="Fa">Fa</button>
+        <button class="key" data-note="Sol">Sol</button>
+        <button class="key" data-note="La">La</button>
+        <button class="key" data-note="Si">Si</button>
+    </div>
+
+    <script>
+        /** 
+         * INIT TELEGRAM & APP STATE 
+         */
+        const tg = window.Telegram.WebApp;
+        tg.expand(); // Plein écran
+        tg.ready();
+
+        const THEME = {
+            bg: tg.themeParams.bg_color || '#1a1a2e',
+            text: tg.themeParams.text_color || '#ffffff',
+            btn: tg.themeParams.button_color || '#e94560'
+        };
+
+        // État global
+        const STATE = {
+            clef: 'sol', // 'sol' ou 'fa'
+            score: 0,
+            combo: 0,
+            lives: 3,
+            isPlaying: false,
+            highScore: 0,
+            notesSpawned: 0,
+            notesHit: 0,
+            missedStats: { 'Do':0, 'Ré':0, 'Mi':0, 'Fa':0, 'Sol':0, 'La':0, 'Si':0 },
+            baseSpeed: 100, // pixels par seconde
+            speedMultiplier: 1
+        };
+
+        // Gestion du Storage (Cloud via Telegram ou LocalStorage fallback)
+        function loadHighScore() {
+            if (tg.CloudStorage) {
+                tg.CloudStorage.getItem('solfege_hs', (err, val) => {
+                    if (!err && val) STATE.highScore = parseInt(val);
+                    else STATE.highScore = parseInt(localStorage.getItem('solfege_hs') || 0);
+                    document.getElementById('highScoreVal').innerText = STATE.highScore;
+                });
+            } else {
+                STATE.highScore = parseInt(localStorage.getItem('solfege_hs') || 0);
+                document.getElementById('highScoreVal').innerText = STATE.highScore;
+            }
+        }
+        function saveHighScore() {
+            if (STATE.score > STATE.highScore) {
+                STATE.highScore = STATE.score;
+                if (tg.CloudStorage) tg.CloudStorage.setItem('solfege_hs', STATE.highScore.toString());
+                localStorage.setItem('solfege_hs', STATE.highScore.toString());
+            }
+        }
+        loadHighScore();
+
+        /** 
+         * MOTEUR AUDIO (Web Audio API - Synthétiseur 100% procédural) 
+         */
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        let audioCtx;
+
+        function initAudio() {
+            if (!audioCtx) audioCtx = new AudioContext();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+        }
+
+        function playTone(freq, type = 'sine') {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            
+            // Enveloppe ADSR simple (Piano/Onde douce)
+            gain.gain.setValueAtTime(0, audioCtx.currentTime);
+            gain.gain.linearRampToValueAtTime(0.6, audioCtx.currentTime + 0.02); // Attack
+            gain.gain.exponentialRampToValueAtTime(0.1, audioCtx.currentTime + 0.2); // Decay
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5); // Release
+            
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.5);
+        }
+
+        function playErrorSound() {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(50, audioCtx.currentTime + 0.2);
+            gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.2);
+        }
+
+        /**
+         * DONNÉES MUSICALES (Fréquences et position visuelle sur la portée)
+         * Offset: 0 = Ligne centrale. Positif = vers le bas, Négatif = vers le haut.
+         * 1 unité = espace entre 2 lignes.
+         */
+        const NOTES_DATA = {
+            'sol': [
+                { name: 'Do', freq: 261.63, offset: 3 },    // C4 - Ligne suppl. bas
+                { name: 'Ré', freq: 293.66, offset: 2.5 },  // D4 - Espace sous portée
+                { name: 'Mi', freq: 329.63, offset: 2 },    // E4 - 1ère ligne
+                { name: 'Fa', freq: 349.23, offset: 1.5 },  // F4 - 1er espace
+                { name: 'Sol', freq: 392.00, offset: 1 },   // G4 - 2ème ligne
+                { name: 'La', freq: 440.00, offset: 0.5 },  // A4 - 2ème espace
+                { name: 'Si', freq: 493.88, offset: 0 }     // B4 - 3ème ligne (centre)
+            ],
+            'fa': [
+                { name: 'Do', freq: 130.81, offset: 1.5 },  // C3 - 2ème espace
+                { name: 'Ré', freq: 146.83, offset: 1 },    // D3 - 3ème ligne (centre)
+                { name: 'Mi', freq: 164.81, offset: 0.5 },  // E3 - 3ème espace
+                { name: 'Fa', freq: 174.61, offset: 0 },    // F3 - 4ème ligne
+                { name: 'Sol', freq: 196.00, offset: -0.5 },// G3 - 4ème espace
+                { name: 'La', freq: 220.00, offset: -1 },   // A3 - 5ème ligne (haut)
+                { name: 'Si', freq: 246.94, offset: -1.5 }  // B3 - Espace au dessus
+            ]
+        };
+
+        /** 
+         * MOTEUR CANVAS (Rendu 60 FPS)
+         */
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        let width, height, centerY, lineSpacing, targetX, targetWidth;
+        
+        let activeNotes = [];
+        let floatingTexts = [];
+        let lastTime = 0;
+        let spawnTimer = 0;
+        let animationId;
+
+        function resizeCanvas() {
+            width = canvas.clientWidth;
+            height = canvas.clientHeight;
+            canvas.width = width * window.devicePixelRatio;
+            canvas.height = height * window.devicePixelRatio;
+            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+            
+            centerY = height / 2;
+            lineSpacing = Math.min(height / 12, 18); // Écart entre les lignes
+            targetX = width * 0.2; // Zone de validation à gauche
+            targetWidth = 50;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        class NoteObj {
+            constructor(data) {
+                this.x = width + 50;
+                this.yOffset = data.offset;
+                this.name = data.name;
+                this.freq = data.freq;
+                this.active = true;
+                this.speed = STATE.baseSpeed * STATE.speedMultiplier;
+            }
+            update(dt) { this.x -= this.speed * dt; }
+            draw() {
+                const y = centerY + (this.yOffset * lineSpacing);
+                ctx.fillStyle = this.x > targetX - 20 && this.x < targetX + targetWidth + 20 ? THEME.btn : THEME.text;
+                
+                // Dessin de la note (tête)
+                ctx.beginPath();
+                ctx.ellipse(this.x, y, lineSpacing*0.8, lineSpacing*0.6, -Math.PI/10, 0, Math.PI*2);
+                ctx.fill();
+                
+                // Hampe (tige) de la note
+                ctx.fillRect(this.x + lineSpacing*0.6, y - lineSpacing*2.5, 2, lineSpacing*2.5);
+
+                // Ligne supplémentaire (ex: Do en clé de sol)
+                if (Math.abs(this.yOffset) >= 3 && Math.abs(this.yOffset) % 1 === 0) {
+                    ctx.fillRect(this.x - lineSpacing*1.2, y - 1, lineSpacing*2.4, 2);
+                }
+            }
+        }
+
+        class FloatingText {
+            constructor(text, x, y, color = '#2ecc71') {
+                this.text = text; this.x = x; this.y = y;
+                this.color = color; this.life = 1.0;
+            }
+            update(dt) { this.y -= 30 * dt; this.life -= dt * 1.5; }
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.globalAlpha = Math.max(0, this.life);
+                ctx.font = 'bold 20px Arial';
+                ctx.fillText(this.text, this.x, this.y);
+                ctx.globalAlpha = 1.0;
+            }
+        }
+
+        function spawnNote() {
+            const list = NOTES_DATA[STATE.clef];
+            const randomData = list[Math.floor(Math.random() * list.length)];
+            activeNotes.push(new NoteObj(randomData));
+            STATE.notesSpawned++;
+            
+            // Accélération progressive
+            STATE.speedMultiplier = 1 + (STATE.notesSpawned * 0.02);
+        }
+
+        function loseLife(noteName) {
+            STATE.lives--;
+            STATE.combo = 0;
+            updateHUD();
+            playErrorSound();
+            if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+            
+            // Screen shake
+            document.body.classList.add('shaking');
+            setTimeout(() => document.body.classList.remove('shaking'), 300);
+
+            if (noteName) STATE.missedStats[noteName]++;
+
+            if (STATE.lives <= 0) {
+                gameOver();
+            }
+        }
+
+        function gameLoop(time) {
+            if (!STATE.isPlaying) return;
+            const dt = (time - lastTime) / 1000;
+            lastTime = time;
+
+            ctx.clearRect(0, 0, width, height);
+
+            // 1. Dessiner la portée
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+            for (let i = -2; i <= 2; i++) {
+                ctx.fillRect(0, centerY + (i * lineSpacing) - 1, width, 2);
+            }
+
+            // 2. Dessiner la Clé (Caractère Unicode Standard)
+            ctx.fillStyle = THEME.text;
+            ctx.font = `${lineSpacing * 6}px serif`;
+            ctx.textBaseline = 'middle';
+            if (STATE.clef === 'sol') {
+                ctx.fillText("𝄞", 10, centerY + lineSpacing);
+            } else {
+                ctx.fillText("𝄢", 10, centerY - lineSpacing*0.5);
+            }
+
+            // 3. Dessiner la Zone Cible
+            ctx.fillStyle = 'rgba(233, 69, 96, 0.2)';
+            ctx.fillRect(targetX, 0, targetWidth, height);
+            ctx.strokeStyle = THEME.btn;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(targetX, 0, targetWidth, height);
+
+            // 4. Update & Dessin des notes
+            spawnTimer -= dt;
+            // Spawn interval dépend de la vitesse
+            let spawnInterval = 1.5 / STATE.speedMultiplier; 
+            if (spawnTimer <= 0) {
+                spawnNote();
+                spawnTimer = spawnInterval;
+            }
+
+            for (let i = activeNotes.length - 1; i >= 0; i--) {
+                const note = activeNotes[i];
+                note.update(dt);
+                
+                // Missed (Sortie d'écran)
+                if (note.x < targetX - 40) {
+                    loseLife(note.name);
+                    activeNotes.splice(i, 1);
+                    continue;
+                }
+                note.draw();
+            }
+
+            // 5. Update & Dessin Floating Texts
+            for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                const ft = floatingTexts[i];
+                ft.update(dt);
+                ft.draw();
+                if (ft.life <= 0) floatingTexts.splice(i, 1);
+            }
+
+            animationId = requestAnimationFrame(gameLoop);
+        }
+
+        /** 
+         * LOGIQUE D'INTERACTION (Clavier)
+         */
+        document.querySelectorAll('.key').forEach(btn => {
+            // Support Touch & Click (Prevent Default pour éviter double event)
+            const handlePress = (e) => {
+                e.preventDefault();
+                if (!STATE.isPlaying) return;
+                initAudio(); // Unsuspend iOS AudioContext si pas déjà fait
+                
+                const noteName = btn.getAttribute('data-note');
+                btn.classList.add('pressed');
+                setTimeout(() => btn.classList.remove('pressed'), 100);
+
+                // Trouver la note la plus à gauche dans la zone d'acceptation
+                let hitIdx = -1;
+                for (let i = 0; i < activeNotes.length; i++) {
+                    const n = activeNotes[i];
+                    // Tolérance large (avant et un peu après la cible)
+                    if (n.x > targetX - 30 && n.x < targetX + targetWidth + 50) {
+                        hitIdx = i;
+                        break; // Première trouvée = plus proche
+                    }
+                }
+
+                if (hitIdx !== -1) {
+                    const targetNote = activeNotes[hitIdx];
+                    if (targetNote.name === noteName) {
+                        // HIT RÉUSSI
+                        playTone(targetNote.freq);
+                        if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+                        
+                        STATE.combo++;
+                        const points = 10 * STATE.combo;
+                        STATE.score += points;
+                        STATE.notesHit++;
+                        
+                        let msg = STATE.combo > 5 ? "On Fire ! 🔥" : "Parfait !";
+                        let color = STATE.combo > 5 ? "#e74c3c" : "#2ecc71";
+                        floatingTexts.push(new FloatingText(`+${points}`, targetNote.x, targetNote.y - 40, color));
+                        if(STATE.combo > 2) floatingTexts.push(new FloatingText(msg, targetNote.x, targetNote.y - 70, color));
+                        
+                        activeNotes.splice(hitIdx, 1); // Détruit la note
+                        updateHUD();
+                    } else {
+                        // MAUVAISE TOUCHE
+                        loseLife(targetNote.name);
+                    }
+                } else {
+                    // Clic dans le vide (Optionnel: pénaliser ou non. Ici on pardonne le spam).
+                }
+            };
+            btn.addEventListener('touchstart', handlePress, {passive: false});
+            btn.addEventListener('mousedown', handlePress);
+        });
+
+        /**
+         * GESTION DES MENUS
+         */
+        const menuScreen = document.getElementById('menuScreen');
+        const gameOverScreen = document.getElementById('gameOverScreen');
+        const hud = document.getElementById('hud');
+        const keyboard = document.getElementById('keyboard');
+        
+        const btnCleSol = document.getElementById('btnCleSol');
+        const btnCleFa = document.getElementById('btnCleFa');
+
+        btnCleSol.addEventListener('click', () => {
+            STATE.clef = 'sol';
+            btnCleSol.classList.add('selected');
+            btnCleFa.classList.remove('selected');
+        });
+        btnCleFa.addEventListener('click', () => {
+            STATE.clef = 'fa';
+            btnCleFa.classList.add('selected');
+            btnCleSol.classList.remove('selected');
+        });
+
+        function updateHUD() {
+            document.getElementById('scoreVal').innerText = STATE.score;
+            document.getElementById('livesVal').innerText = '❤️'.repeat(Math.max(0, STATE.lives));
+            const comboEl = document.getElementById('hud-combo');
+            if (STATE.combo > 1) {
+                document.getElementById('comboVal').innerText = STATE.combo;
+                comboEl.classList.add('visible');
+            } else {
+                comboEl.classList.remove('visible');
+            }
+        }
+
+        function startGame() {
+            initAudio();
+            STATE.isPlaying = true;
+            STATE.score = 0; STATE.combo = 0; STATE.lives = 3;
+            STATE.notesSpawned = 0; STATE.notesHit = 0;
+            STATE.speedMultiplier = 1;
+            STATE.missedStats = { 'Do':0, 'Ré':0, 'Mi':0, 'Fa':0, 'Sol':0, 'La':0, 'Si':0 };
+            
+            activeNotes = []; floatingTexts = [];
+            spawnTimer = 1.0;
+            
+            menuScreen.classList.remove('active');
+            gameOverScreen.classList.remove('active');
+            hud.style.display = 'flex';
+            keyboard.style.display = 'flex';
+            resizeCanvas();
+            updateHUD();
+            
+            lastTime = performance.now();
+            animationId = requestAnimationFrame(gameLoop);
+        }
+
+        function gameOver() {
+            STATE.isPlaying = false;
+            cancelAnimationFrame(animationId);
+            saveHighScore();
+            
+            hud.style.display = 'none';
+            keyboard.style.display = 'none';
+            gameOverScreen.classList.add('active');
+            
+            document.getElementById('finalScore').innerText = STATE.score;
+            let precision = STATE.notesSpawned > 0 ? Math.round((STATE.notesHit / STATE.notesSpawned) * 100) : 0;
+            document.getElementById('precisionVal').innerText = precision;
+            
+            // Trouver la note la plus ratée
+            let worst = '-'; let maxMiss = 0;
+            for (const [note, count] of Object.entries(STATE.missedStats)) {
+                if (count > maxMiss) { maxMiss = count; worst = note; }
+            }
+            document.getElementById('worstNoteVal').innerText = maxMiss > 0 ? worst : 'Aucune !';
+        }
+
+        document.getElementById('btnPlay').addEventListener('click', startGame);
+        document.getElementById('btnRestart').addEventListener('click', startGame);
+        document.getElementById('btnMenu').addEventListener('click', () => {
+            gameOverScreen.classList.remove('active');
+            menuScreen.classList.add('active');
+            loadHighScore(); // Update score on menu
+        });
+
+    </script>
+</body>
+</html>
